@@ -31,8 +31,8 @@ tomli==2.0.1
 typed-ast==1.5.2
 typing_extensions==4.1.1
 urllib3==1.26.9
-gunicorn==20.0.4
 zipp==3.8.0
+gunicorn==20.0.4
 psycopg2-binary==2.8.6
 asgiref==3.2.10
 python-dotenv==0.20.0
