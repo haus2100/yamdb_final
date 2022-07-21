@@ -45,7 +45,7 @@ jobs:
           with:
             file: api_yamdb/Dockerfile
             push: true
-            tags: ${{ secrets.DOCKER_USERNAME }}/api_yamdb:latest
+            tags: ${{ secrets.DOCKER_USERNAME }}/ymdb_final:v1.0
 
   deploy:
       if: github.ref == 'refs/heads/master'
@@ -60,7 +60,7 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           passphrase: ${{ secrets.PASSPHRASE }}
           script: |
-            sudo docker pull ${{ secrets.DOCKER_USERNAME }}/api_yamdb:latest
+            sudo docker pull ${{ secrets.DOCKER_USERNAME }}/ymdb_final:v1.0
             sudo docker-compose stop
             sudo docker-compose rm web
             touch .env
