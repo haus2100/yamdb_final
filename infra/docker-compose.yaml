@@ -11,8 +11,8 @@ services:
     image: haus2100/ymdb_final:v1.0
     restart: always
     volumes:
-      - static_value:/api_yamdb/static/
-      - media_value:/api_yamdb/media/
+      - static_value:/app/static/
+      - media_value:/app/media/
     depends_on:
       - db
     env_file:
