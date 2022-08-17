@@ -2,7 +2,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from users.models import User
 
-from .validators import current_year_validator
+from .validators import current_year_validator, validate_year
 
 
 class Category(models.Model):
@@ -68,10 +68,7 @@ class Title(models.Model):
     year = models.PositiveIntegerField(
         'Год выпуска',
         db_index=True,
-        validators=(
-            MinValueValidator(862),
-            current_year_validator
-        ),
+        validators=(validate_year,),
     )
     rating = models.IntegerField(
         'Рейтинг поста',
