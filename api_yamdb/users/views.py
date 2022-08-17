@@ -1,84 +1,140 @@
-from api.permissions import AdminOrSuperuser
-from django.contrib.auth.tokens import default_token_generator
-from django.core.mail import EmailMessage
+from api.permissions import IsAdminOrOwner
+from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
-from rest_framework import filters, status, viewsets
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.exceptions import ValidationError
+from rest_framework import filters, generics, permissions, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import AccessToken
+from rest_framework_simplejwt.tokens import RefreshToken
+from users.serializers import (RegisterSerializer, UserLoginSerializer,
+                               UserSerializer)
+from users.utils import Utils
 
-from .models import User
-from .serializers import (CurrentUserSerializer, UserAuthSerializer,
-                          UserCreateSerializer, UserSignUpSerializer)
-
-
-@api_view(['POST'])
-def signup(request):
-    serializer = UserSignUpSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    if request.data['username'] == 'me':
-        return Response(
-            serializer.errors,
-            status=status.HTTP_400_BAD_REQUEST,
-            exception=True
-        )
-    user, created = User.objects.get_or_create(
-        email=request.data.get('email'),
-        username=request.data.get('username')
-    )
-    verify_code = default_token_generator.make_token(user)
-    email = EmailMessage(
-        'YaMDB registration',
-        f'Your verification code: {verify_code}',
-        'no-reply@yamdb.com',
-        [request.data['email']],
-    )
-    email.send()
-    return Response(request.data, status=status.HTTP_200_OK)
+User = get_user_model()
 
 
-@api_view(["POST"])
-def get_token(request):
-    try:
-        username, confirmation_code = request.data.values()
-    except ValueError as err:
-        return Response(
-            {"Ошибка": f"{err}"}, status=status.HTTP_400_BAD_REQUEST
-        )
-    user = get_object_or_404(User, username=username)
-    serializer = UserAuthSerializer(user, data=request.data)
-    serializer.is_valid(raise_exception=True)
-    if not default_token_generator.check_token(user, confirmation_code):
-        raise ValidationError("Неверный confirmation_code")
-    user.is_active = True
-    user.save()
-    return Response(
-        {"Ваш токен": f"{AccessToken.for_user(user)}"},
-        status=status.HTTP_200_OK,
-    )
+class UserViewSet(viewsets.ModelViewSet):
+    """
+    Получение пользователя по username (GET).
+    Добавление пользователя (POST).
+    Изменение данных пользователя по username (PATCH).
+    Удаление пользователя по username (DELETE).
+    Права доступа: Администратор
+    Поля email и username для POST и PATCH запросов должны быть уникальными.
+    """
 
-
-class UserCreateViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
-    serializer_class = UserCreateSerializer
-    permission_classes = (IsAuthenticated, AdminOrSuperuser)
-    pagination_class = PageNumberPagination
     filter_backends = (filters.SearchFilter,)
     search_fields = ('username',)
     lookup_field = 'username'
+    pagination_class = PageNumberPagination
+    permission_classes = (IsAdminOrOwner,)
+    serializer_class = UserSerializer
+
+    @action(methods=['patch', 'get'], detail=False)
+    def me(self, request):
+        """
+        Получение данных своей учетной записи (GET).
+        Изменение данных своей учетной записи (PATCH).
+        Права доступа: Любой авторизованный пользователь
+        Поля email и username для PATCH запроса должны быть уникальными.
+        """
+        user = get_object_or_404(User, id=request.user.id)
+
+        if request.method == 'GET':
+            serializer = self.get_serializer(user)
+            return Response(serializer.data)
+
+        if request.method == 'PATCH':
+            serializer = self.get_serializer(
+                user,
+                data=request.data,
+                partial=True
+            )
+            serializer.is_valid(raise_exception=True)
+
+            if (user.is_user
+                    and serializer.validated_data.pop(
+                        'role', 'user')
+                    != user.role):
+                return Response(
+                    serializer.data,
+                    status=status.HTTP_403_FORBIDDEN)
+
+            self.perform_update(serializer)
+            return Response(serializer.data)
+        return False
 
 
-@api_view(["GET", "PATCH"])
-@permission_classes([IsAuthenticated])
-def current_user(request):
-    if request.method == "PATCH":
-        serializer = CurrentUserSerializer(request.user, data=request.data)
-        print(serializer)
+class RegisterView(generics.CreateAPIView):
+    """
+    Получить код подтверждения на переданный email.
+    Права доступа: Доступно без токена.
+    Поля email и username должны быть уникальными.
+    """
+
+    queryset = User.objects.all()
+    serializer_class = RegisterSerializer
+    permission_classes = (permissions.AllowAny,)
+    pagination_class = None
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_200_OK)
-    serializer = CurrentUserSerializer(request.user)
-    return Response(serializer.data)
+        self.perform_create(serializer)
+        user_data = serializer.data
+        user = User.objects.get(email=user_data['email'])
+        token = Utils.token_generator.make_token(user)
+
+        email_body = (
+            f'Добрый день, {user.username}! '
+            f'Ваш confirmation_code: {token}'
+        )
+        data = {
+            'email_body': email_body,
+            'to_email': user.email,
+            'email_subject': 'Ваш Токен YamDB!'
+        }
+        Utils.send_email(data)
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK,
+            headers=headers)
+
+
+class ConfirmTokenView(generics.RetrieveAPIView):
+    """
+    Получение JWT-токена в обмен на username и confirmation code.
+    Права доступа: Доступно без токена.
+    """
+
+    permission_classes = (permissions.AllowAny,)
+    serializer_class = UserLoginSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        username = serializer.data['username']
+        confirmation_code = serializer.data['confirmation_code']
+        user = get_object_or_404(User, username=username)
+
+        if (user is not None
+                and Utils.token_generator.check_token(
+                    user, confirmation_code)):
+
+            user.is_active = True
+            user.save()
+        else:
+            response = {
+                'confirmation_code': 'Токен не валидный'
+            }
+            return Response(response, status=status.HTTP_400_BAD_REQUEST)
+
+        token = RefreshToken.for_user(user)
+        response = {
+            'token': str(token.access_token)
+        }
+        return Response(response, status=status.HTTP_200_OK)
