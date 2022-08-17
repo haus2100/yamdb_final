@@ -1,13 +1,13 @@
 import datetime
 
-from django.core.validators import MaxValueValidator
 from django.core.exceptions import ValidationError
-
+from django.core.validators import MaxValueValidator
 
 
 def current_year_validator(value):
     value = datetime.date.today().year
     return MaxValueValidator(value)
+
 
 def validate_year(value):
     if value > datetime.date.today().year:
